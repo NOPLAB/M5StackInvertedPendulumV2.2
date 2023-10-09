@@ -27,12 +27,12 @@ ComplementaryFilter c_filter;
 // KalmanFilter kalman_filter;
 
 RobotAngle angle;
-constexpr int32_t angle_green = 5;
+// constexpr int32_t angle_green = 5;
 
 bool is_output = false;
 
 uint32_t pid_T = 5;    // 5ms => 200Hz cycle frequency
-uint32_t motor_T = 10; // 5ms => 200Hz cycle frequency
+uint32_t motor_T = 10; // 10ms => 100Hz cycle frequency
 uint32_t motor_last_time = 0;
 
 double angle_reference = -90;
@@ -401,7 +401,7 @@ void loop()
     reset();
   }
 
-  // C Target Angle
+  // B Target Angle
   if (!M5.BtnA.isPressed() && M5.BtnB.wasClicked() && !M5.BtnC.isPressed())
   {
     angle_reference = angle.x;
