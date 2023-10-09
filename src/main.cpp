@@ -155,6 +155,8 @@ void tcp_task(void *pvParameters)
           DynamicJsonDocument doc(1024);
           deserializeJson(doc, str);
 
+          portENTER_CRITICAL(&pid_mutex);
+
           if (!doc["ap"].isNull())
           {
             ap = static_cast<float>(doc["ap"]);
@@ -180,8 +182,6 @@ void tcp_task(void *pvParameters)
             pd = static_cast<float>(doc["pd"]);
           }
 
-          portENTER_CRITICAL(&pid_mutex);
-
           angle_pid.setCoefficients(ap, ai, ad);
           position_pid.setCoefficients(pp, pi, pd);
 
@@ -192,12 +192,16 @@ void tcp_task(void *pvParameters)
           write_doc["pp"] = pp;
           write_doc["pi"] = pi;
           write_doc["pd"] = pd;
+
+          portEXIT_CRITICAL(&pid_mutex);
+
           String write_str;
           serializeJson(write_doc, write_str);
 
-          client.write(write_str.c_str());
+          delay(100);
 
-          portEXIT_CRITICAL(&pid_mutex);
+          Serial.println(write_str.c_str());
+          client.write(write_str.c_str());
         }
       }
       client.stop();
