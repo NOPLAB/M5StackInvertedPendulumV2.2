@@ -36,16 +36,16 @@ uint32_t motor_T = 10; // 10ms => 100Hz cycle frequency
 uint32_t motor_last_time = 0;
 
 double angle_reference = -90;
-double ap = 0.6;
-double ai = 4;
-double ad = 0.0006;
+double ap = 0.5;
+double ai = 3.5;
+double ad = 0.002;
 double a_in = 0;
 double a_out = 0;
 ArduPID angle_pid;
 
 double position_reference = 0;
 double pp = 0.006;
-double pi = 0;
+double pi = 0.0004;
 double pd = 0.00001;
 double p_in = 0;
 double p_out = 0;
@@ -216,8 +216,6 @@ void reset()
   send_motor_power(slave_addr_r, hz_to_ms(0));
   send_motor_power(slave_addr_l, hz_to_ms(0));
 
-  portENTER_CRITICAL(&pid_mutex);
-
   position = 0;
   motor_output = 0;
 
@@ -225,8 +223,6 @@ void reset()
   position_pid.reset();
   angle_pid.start();
   position_pid.start();
-
-  portEXIT_CRITICAL(&pid_mutex);
 }
 
 void pid_compute()
@@ -393,7 +389,9 @@ void loop()
   {
     is_output = !is_output;
 
+    portENTER_CRITICAL(&pid_mutex);
     reset();
+    portEXIT_CRITICAL(&pid_mutex);
   }
 
   // B Target Angle
