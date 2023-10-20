@@ -36,16 +36,16 @@ uint32_t motor_T = 10; // 10ms => 100Hz cycle frequency
 uint32_t motor_last_time = 0;
 
 double angle_reference = -90;
-double ap = 0.5;
-double ai = 3.5;
-double ad = 0.002;
+double ap = 0.6;
+double ai = 4;
+double ad = 0.0006;
 double a_in = 0;
 double a_out = 0;
 ArduPID angle_pid;
 
 double position_reference = 0;
 double pp = 0.006;
-double pi = 0.0004;
+double pi = 0;
 double pd = 0.00001;
 double p_in = 0;
 double p_out = 0;
@@ -63,7 +63,7 @@ WiFiServer server(PORT);
 
 bool wifi_connected = false;
 
-portMUX_TYPE pid_mutex = portMUX_INITIALIZER_UNLOCKED;
+SemaphoreHandle_t xBinarySemaphore;
 
 // uint32_t loop_time;
 
@@ -155,8 +155,6 @@ void tcp_task(void *pvParameters)
           DynamicJsonDocument doc(1024);
           deserializeJson(doc, str);
 
-          portENTER_CRITICAL(&pid_mutex);
-
           if (!doc["ap"].isNull())
           {
             ap = static_cast<float>(doc["ap"]);
@@ -182,26 +180,29 @@ void tcp_task(void *pvParameters)
             pd = static_cast<float>(doc["pd"]);
           }
 
-          angle_pid.setCoefficients(ap, ai, ad);
-          position_pid.setCoefficients(pp, pi, pd);
+          if (xSemaphoreTake(xBinarySemaphore, portMAX_DELAY) == pdTRUE)
+          {
+            angle_pid.setCoefficients(ap, ai, ad);
+            position_pid.setCoefficients(pp, pi, pd);
 
-          DynamicJsonDocument write_doc(1024);
-          write_doc["ap"] = ap;
-          write_doc["ai"] = ai;
-          write_doc["ad"] = ad;
-          write_doc["pp"] = pp;
-          write_doc["pi"] = pi;
-          write_doc["pd"] = pd;
+            DynamicJsonDocument write_doc(1024);
+            write_doc["ap"] = ap;
+            write_doc["ai"] = ai;
+            write_doc["ad"] = ad;
+            write_doc["pp"] = pp;
+            write_doc["pi"] = pi;
+            write_doc["pd"] = pd;
+            String write_str;
+            serializeJson(write_doc, write_str);
 
-          portEXIT_CRITICAL(&pid_mutex);
+            client.write(write_str.c_str());
 
-          String write_str;
-          serializeJson(write_doc, write_str);
-
-          delay(100);
-
-          Serial.println(write_str.c_str());
-          client.write(write_str.c_str());
+            xSemaphoreGive(xBinarySemaphore);
+          }
+          else
+          {
+            Serial.println("SemaphoreTake failed.");
+          }
         }
       }
       client.stop();
@@ -216,60 +217,66 @@ void reset()
   send_motor_power(slave_addr_r, hz_to_ms(0));
   send_motor_power(slave_addr_l, hz_to_ms(0));
 
-  position = 0;
-  motor_output = 0;
+  if (xSemaphoreTake(xBinarySemaphore, (TickType_t)2000) == pdTRUE)
+  {
+    position = 0;
+    motor_output = 0;
 
-  angle_pid.reset();
-  position_pid.reset();
-  angle_pid.start();
-  position_pid.start();
+    angle_pid.reset();
+    position_pid.reset();
+    angle_pid.start();
+    position_pid.start();
+
+    xSemaphoreGive(xBinarySemaphore);
+  }
 }
 
 void pid_compute()
 {
-  portENTER_CRITICAL(&pid_mutex);
-
-  //    double angle_error = (angle_reference - angle.x) / 90;
-  a_in = angle.x;
-  angle_pid.compute();
-
-  //    double position_error = position_reference + position;
-  p_in = position;
-  position_pid.compute();
-
-  motor_output = a_out + p_out;
-  position += motor_output;
-
-  // モーターの出力値のオーバー検出
-  if (abs(motor_output) > max_motor_output)
+  if (xSemaphoreTake(xBinarySemaphore, portMAX_DELAY) == pdTRUE)
   {
-    motor_output = max_motor_output;
+    //    double angle_error = (angle_reference - angle.x) / 90;
+    a_in = angle.x;
+    angle_pid.compute();
 
-    // オーバーしている期間が設定値を超えるとリセットされる
-    if (over_motor_output_timer > 0 && (millis() - over_motor_output_timer) > max_over_motor_output_time)
+    //    double position_error = position_reference + position;
+    p_in = position;
+    position_pid.compute();
+
+    motor_output = a_out + p_out;
+    position += motor_output;
+
+    // モーターの出力値のオーバー検出
+    if (abs(motor_output) > max_motor_output)
     {
-      is_output = !is_output;
+      motor_output = max_motor_output;
+
+      // オーバーしている期間が設定値を超えるとリセットされる
+      if (over_motor_output_timer > 0 && (millis() - over_motor_output_timer) > max_over_motor_output_time)
+      {
+        is_output = !is_output;
+        over_motor_output_timer = 0;
+        reset();
+      }
+      else if (over_motor_output_timer == 0)
+      {
+        over_motor_output_timer = millis();
+      }
+    }
+    else
+    {
       over_motor_output_timer = 0;
-      reset();
     }
-    else if (over_motor_output_timer == 0)
-    {
-      over_motor_output_timer = millis();
-    }
-  }
-  else
-  {
-    over_motor_output_timer = 0;
-  }
 
-  //    angle_pid.debug(&Serial, "angle", // Can include or comment out any of these terms to print
-  //                    PRINT_OUTPUT | // in the Serial plotter
-  //                    PRINT_BIAS |
-  //                    PRINT_P |
-  //                    PRINT_I |
-  //                    PRINT_D);
+    //    angle_pid.debug(&Serial, "angle", // Can include or comment out any of these terms to print
+    //                    PRINT_OUTPUT | // in the Serial plotter
+    //                    PRINT_BIAS |
+    //                    PRINT_P |
+    //                    PRINT_I |
+    //                    PRINT_D);
 
-  portEXIT_CRITICAL(&pid_mutex);
+    xSemaphoreGive(xBinarySemaphore);
+  }
 }
 
 void setup()
@@ -301,6 +308,8 @@ void setup()
 
   angle_pid.start();
   position_pid.start();
+
+  xBinarySemaphore = xSemaphoreCreateMutex();
 
   if (WifiConnect(wifi_ssid, wifi_pass))
   {
@@ -389,9 +398,7 @@ void loop()
   {
     is_output = !is_output;
 
-    portENTER_CRITICAL(&pid_mutex);
     reset();
-    portEXIT_CRITICAL(&pid_mutex);
   }
 
   // B Target Angle
